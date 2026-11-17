@@ -1,0 +1,46 @@
+name: Quality checks
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: pnpm/action-setup@f53f5227a9e83886ab598c617f3c170fab62f0d3 # v6
+        with:
+          run_install: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm lint
+      - name: Typecheck routes and source
+        run: pnpm typecheck
+      - name: Detect configured tests
+        id: tests
+        run: |
+          node --input-type=module -e "import fs from 'node:fs'; const { scripts } = JSON.parse(fs.readFileSync('package.json', 'utf8')); fs.appendFileSync(process.env.GITHUB_OUTPUT, 'configured=' + Boolean(scripts.test) + '\n')"
+      - name: Run tests
+        if: steps.tests.outputs.configured == 'true'
+        run: pnpm test
+      - name: Production build
+        run: pnpm build
