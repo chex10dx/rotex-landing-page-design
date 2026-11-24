@@ -2,6 +2,8 @@
 
 Date: 16 November 2026. Scope: F01 development foundation and architecture/business documentation alignment.
 
+Historical record: the report below describes the original Sprint 1 only. The separately authorized 18 November dependency/F03 implementation, current audit results, tests, and next task are recorded in the [Phase 1 report](PHASE_1_REPORT.md).
+
 ## A. Summary
 
 F01 is complete against its local acceptance criteria. The final dependency graph installs from a frozen lockfile in a fresh local checkout; lint, route-aware typecheck, production build, storefront smoke checks, workflow validation, and local PostgreSQL checks pass. Only F01 is checked complete.

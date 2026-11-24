@@ -1,10 +1,14 @@
 # ROTEX e-commerce plan
 
-Prepared: 16 November 2026. Updated for Sprint 1. Confirmed scope: **Syria first, guest cash on delivery, Arabic/RTL and English/LTR, fitted and adjustable caps, USD and new-denomination SYP**.
+Prepared: 16 November 2026. Reviewed and expanded: 17 November 2026. Confirmed scope: **Syria first, guest cash on delivery, Arabic/RTL and English/LTR, fitted and adjustable caps, USD and new-denomination SYP**.
 
 The goal is to turn the existing presentation storefront into a store that customers can order from and ROTEX staff can operate. Keep the current visual direction and approved product branding. Complete the shopping and fulfillment flow before adding growth features.
 
 The original brief intentionally limited the current site to a prototype. Sprint 1 implements only F01 (the development foundation) and documentation alignment. Real catalog persistence, orders, checkout, and administration remain future work. See the [task checklist](ECOMMERCE_TASKS.md) and [Sprint 1 report](SPRINT_1_REPORT.md) for verified implementation status.
+
+The latest [project review](PROJECT_ANALYSIS.md) checks this plan against the repository, records current gaps and verification limits, and maps a proposed implementation order to the existing task IDs. The requested end result is a customer website plus a protected staff dashboard sharing one backend and database.
+
+Implementation update, 18 November: the authorized dependency/F03 phase upgrades Next.js/Next ESLint plugin to 16.4.6 and TypeScript ESLint to 8.73.0, corrects size/currency/quantity behavior, and adds focused tests. See the [Phase 1 report](PHASE_1_REPORT.md) for verified results and the remaining development-only findings. The 17 November review remains historical evidence. F04/F05 and database/order/admin tasks remain pending.
 
 ## 1. What exists and what needs attention
 
@@ -13,16 +17,16 @@ The review covers `app/`, `components/`, `lib/`, and project configuration. Spri
 | Area | Evidence in the current source | Required work |
 | --- | --- | --- |
 | Storefront | `app/page.tsx` renders one large client component in `components/rotex-storefront.tsx`. | Keep the layout; extract sections and isolate interactive components as real routes are introduced. |
-| Catalog | `lib/products.ts` contains six fitted caps, one image and a sample price per product; its type currently allows only fitted caps. | Support both cap types in the first-release model/UI, with approved galleries, translations, real prices, actual color/size SKUs, and stock. |
-| Currency | `Price()` changes `$58` to `58 SYP` without changing the amount. | Replace the label switch with explicit approved prices or a configured conversion policy. |
-| Size selection | Product-card quick-add supplies `7¼`; every example size is selectable. | Require a deliberate size choice and use actual variant availability. |
-| Cart | Cart and quantity updates use component state; refreshing clears the bag. The spotlight quantity limit does not constrain every add/update path. | Persist variant IDs and quantities; centralize limits and revalidate against the server before ordering. |
+| Catalog | Six fitted demo caps retain their images and visible sample price. Types/UI also support adjustable one-size choices; demo prices are stored in integer USD cents. | Add approved galleries/translations, actual fitted/adjustable SKU stock, and trusted prices in C01/C03. No adjustable products or stock have been invented. |
+| Currency | F03 centralizes USD demo formatting and disables SYP in both selectors until approved rules/prices exist. | Implement approved exact USD/new-SYP pricing, precision, and settlement rules in C03. |
+| Size selection | F03 opens an unselected fitted-size chooser; add requires a valid choice, and optional explicit size options can disable unavailable choices. | Replace demo options with verified inventory-backed variants in C01/C05. |
+| Cart | F03 unifies quantity bounds/variant merging in a reducer. The bag remains in memory and refreshing clears it. | Persist/reconcile variant references in C06 and revalidate all prices/stock on the server before ordering. |
 | Checkout | Continue displays a message saying checkout is disabled. | Add guest COD checkout backed by durable orders and stock reservations. This is an intentional prototype gap. |
 | Brand compliance | Header and footer render `®`, contrary to the supplied brief; the wordmark is styled text. | Remove the invented registration symbol and use approved brand assets. |
 | Navigation | Several links point to `#fitted`, but there is no matching element ID. | Fix existing links and replace shopping anchors with actual catalog routes. |
 | Localization | Arabic copy and RTL styles exist, but language is component state while root HTML stays English. Product text, search data, and some labels remain English. | Use locale URLs, correct document language/direction, complete translations, and bilingual product search. |
 | Accessibility | Dialog roles exist, but focus containment, Escape dismissal, and focus restoration are not implemented. Some inputs remove outlines, and much supporting text is 6–9px. | Complete dialog behavior, visible focus, readable text, and touch interactions. |
-| Images and build | F01 passed its local checks: TypeScript error suppression removed, lint/typecheck commands and validated quality CI added. Hosted CI awaits a remote. Image optimization remains disabled; no automated test suite exists. | Production media and commerce tests remain F06/Q01; see the Sprint 1 report for verification limits and dependency findings. |
+| Images and build | Strict lint/typecheck/build and eight focused rule tests pass with Next 16.4.6. Hosted CI awaits a remote. Image optimization remains disabled. | Production media and full commerce tests remain F06/Q01; see the Phase 1 report for verification limits and remaining dependency findings. |
 | Content and discovery | Newsletter, account, shipping, contact, and social interactions are demos/placeholders. Global metadata exists, but there are no dedicated product pages. | Add real support/policy pages, product metadata, and approved social links; hide unfinished optional features at launch. |
 
 ## 2. First-launch scope
@@ -85,6 +89,29 @@ The finalized architecture is one full-stack **Next.js App Router + TypeScript +
 
 Sprint 1 prepares optional local PostgreSQL infrastructure only. Prisma installation, schema, migrations, and connected persistence begin in C01 after checking compatible stable versions. The demo continues to run without a database. Do not introduce ASP.NET Core, NestJS, separate backend services, microservices, RabbitMQ, or Kubernetes.
 
+```mermaid
+flowchart TD
+  Customer[Customer website: Arabic and English]
+  Staff[Protected staff dashboard]
+  Reads[Server Components: authorized reads]
+  Actions[Server Actions and Route Handlers: validate input and access]
+  Services[Server-only services: catalog, money, inventory, orders, COD]
+  DAL[Server-only Data Access Layer]
+  Prisma[Prisma ORM]
+  Database[(PostgreSQL)]
+  Customer --> Reads
+  Staff --> Reads
+  Customer --> Actions
+  Staff --> Actions
+  Reads --> Services
+  Actions --> Services
+  Services --> DAL
+  DAL --> Prisma
+  Prisma --> Database
+```
+
+The dashboard is the staff interface. The backend is the server-side logic that both interfaces use. Server Components can call services directly; browser interactions use validated actions/handlers. Protected reads and mutations must verify staff access at the server boundary. This separation follows the [Next.js server-only DAL guidance](https://nextjs.org/docs/app/guides/data-security).
+
 - Render catalog and editorial content on the server; use client components for selectors, search controls, the bag, and checkout interactions. This follows [Next.js guidance on limiting client boundaries](https://nextjs.org/docs/app/getting-started/server-and-client-components).
 - Put business operations in server-only services and Prisma access in the DAL; Server Actions/Route Handlers validate inputs and call services. The mock catalog can implement the same catalog interface first. Keep credentials/customer data on the server and authorize every protected read/mutation, including direct calls; layouts/UI checks alone are insufficient. See the [Next.js data security guide](https://nextjs.org/docs/app/guides/data-security).
 - Centralize money formatting, pricing, variant selection, quantity rules, and translations. Use exact integer amounts with separately configurable currency precision, never floating-point monetary totals. Preserve amount, currency, precision, rounding/conversion policy, and rate snapshot when applicable on orders.
@@ -133,6 +160,30 @@ Suggested fulfillment states: `pending_confirmation -> confirmed -> packed -> sh
 
 Track COD separately from fulfillment: an order may be delivered while courier remittance is still outstanding. Record amount/currency due, collection/remittance status, and any return/refund adjustment. Placing an order must never mark it paid.
 
+Model reservations and inventory movements explicitly so expiry, cancellation, shipment, and inspected returns can be reconciled. Order status history, COD collection/remittance records, and staff audit events must survive refresh and process restart. Guest contact/address information belongs to the order; customer accounts are not a prerequisite. Final schema details belong to C01 and the relevant order/admin tasks.
+
+Reservation expiry needs an executable mechanism, not only an expiry timestamp: select a scheduled command or authenticated scheduled handler supported by the chosen host. Release expired reservations transactionally, make retries harmless, and expose overdue failures to staff. Keep network calls outside order transactions. Use the selected Prisma version's supported transaction API; compatibility and concurrency tests are part of O02. See [Prisma transaction guidance](https://www.prisma.io/docs/orm/fundamentals/transactions).
+
+### Staff dashboard and backend scope
+
+Proposed routes below describe the intended interface; none exists yet. Map them to A01–A04 and their catalog/order dependencies rather than creating a second implementation checklist.
+
+| Screen | Proposed route | Staff capability | Existing tasks |
+| --- | --- | --- | --- |
+| Sign in | `/admin/login` | Established staff authentication, secure sessions, sign out, and access checks on every protected operation. | A01 |
+| Overview | `/admin` | New orders needing confirmation, low-stock SKUs, fulfillment backlog, and outstanding COD remittance. Use real records, with date ranges and currency shown; never add amounts from different currencies together. | A03, A04 |
+| Products | `/admin/products` and `/admin/products/{id}` | Draft/edit/publish products, Arabic/English content, approved gallery, fitted/adjustable details, actual variants, and approved prices. Publishing validates required content. | A02, C01, C03, F06 |
+| Inventory | `/admin/inventory` | Search SKU/color/size, see on-hand/reserved/available stock, and record authorized stock adjustments with a reason and history. Never invent fitted size combinations. | A02 |
+| Orders | `/admin/orders` and `/admin/orders/{id}` | Search/filter orders, review contact/address and immutable totals, confirm/pack/ship, record courier reference, cancel, handle failed delivery and inspected returns. Allow only valid transitions. | A03 |
+| COD reconciliation | `/admin/collections` | Record collection and courier remittance separately from delivery, including amount/currency, reference, discrepancy, and authorized adjustment history. | A03 |
+| Delivery configuration | `/admin/delivery` | Maintain approved service areas, fees, active state, and estimates through validated server operations. Changes affect new quotes and preserve existing order snapshots. | O01, A01, A03 |
+
+Start with proposed owner and operations roles, then confirm the permission matrix before implementation. Owners control staff access, approved pricing, publication, delivery configuration, and sensitive cash adjustments; operations staff receive only the product, stock, and fulfillment permissions needed for their job. A01 must provide a controlled initial-owner and staff access grant/revoke procedure; public customer registration remains out of scope. These are proposed boundaries, not implemented roles.
+
+The overview is an operational work queue first. Define counts and cash totals from order/inventory records, distinguish placed orders from delivered orders and remitted cash, and show totals separately by currency. Build it after the underlying operations exist. A separate customer-management module, full CMS, accounting system, and elaborate analytics are outside the initial dashboard scope.
+
+Product, pricing, inventory, delivery, order-transition, and COD services are shared backend operations. Each validates its inputs and permissions, writes durable records/audit events, and returns only the information that its caller needs. Product publication invalidates relevant public catalog caches; private customer/order data must not enter public cached responses or analytics. Staff changes must preserve historical order snapshots.
+
 ## 7. Delivery milestones
 
 The companion [task checklist](ECOMMERCE_TASKS.md) defines dependencies and completion criteria. These are planning ranges for one developer with approved content and accessible services, not delivery promises.
@@ -147,6 +198,8 @@ The companion [task checklist](ECOMMERCE_TASKS.md) defines dependencies and comp
 | M5: Verify and launch | Critical tests, mobile/RTL review, SEO, deployment, restore test, staff rehearsal. | 3–5 working days |
 
 Baseline: approximately **4–7 developer weeks**, excluding asset preparation, business decisions, and provider delays. Re-estimate after M0 and the first successful local build. M1 can start while business inputs are gathered. Do not open live ordering until M3–M5 are complete.
+
+Implementation need not finish every customer screen before starting the dashboard: after C01, begin A01 and then A02 once media dependencies are ready. Build A03 alongside O02 in private development/staging so checkout has an operating workflow before it receives real orders. Add meaningful tests with money, inventory, authorization, and order behavior; Q01 consolidates that evidence before release. See the [project review](PROJECT_ANALYSIS.md) for the proposed work-package order. Nothing in this plan authorizes deployment automatically.
 
 ## 8. Launch acceptance criteria
 

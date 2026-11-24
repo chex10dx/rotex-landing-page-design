@@ -33,6 +33,7 @@ Corepack is a launcher for the pinned pnpm version, not a second package manager
 ```powershell
 corepack pnpm lint
 corepack pnpm typecheck
+corepack pnpm test
 corepack pnpm build
 corepack pnpm start
 ```
@@ -42,7 +43,9 @@ corepack pnpm start
 - `build`: production compilation, TypeScript validation, and prerendering. TypeScript errors are not suppressed.
 - `start`: serves the completed production build on port 3000. Run `build` first.
 
-There is no automated test framework or `test` script yet. Sprint 1 changes infrastructure; meaningful commerce tests remain in Q01. CI detects a future real `test` script and runs it when present. It always performs a frozen installation, lint, typecheck, and production build on pull requests, pushes to `main`/`develop`, and manual dispatch. These checks require no secrets or database.
+`test` runs eight focused storefront-rule tests with Node's built-in runner and native TypeScript stripping, using the pinned Node version. They cover explicit sizes, adjustable one-size fixtures, unavailable options, quantity limits, variant merging/removal, integer-cent totals, and disabled SYP pricing. CI detects this script and runs it alongside frozen installation, lint, typecheck, and production build on pull requests, pushes to `main`/`develop`, and manual dispatch. These checks require no secrets or database. Full commerce/integration coverage remains Q01.
+
+Phase 1 uses Next.js/Next ESLint plugin 16.4.6 and TypeScript ESLint 8.73.0. The production-only audit is clean; the full audit retains one high and one moderate finding in development tools. See the [Phase 1 report](docs/PHASE_1_REPORT.md) for exact evidence, compatibility, Windows installation details, and remaining limits. Use pnpm only; the redundant npm lockfile has been removed.
 
 ESLint uses the [official Next.js plugin directly](https://nextjs.org/docs/app/api-reference/config/eslint#using-the-plugin-directly), with its recommended/Core Web Vitals rules, TypeScript recommended rules, and React Hooks recommended rules. This keeps the lint toolchain on supported ESLint 10 without pulling the broader preset's legacy plugin peer ranges. Next.js 16 uses the ESLint CLI; `next lint` is not available. [Type generation](https://nextjs.org/docs/app/api-reference/cli/next#next-typegen-options) is separate from compilation.
 
@@ -91,12 +94,14 @@ docs/                        Roadmap, task checklist, sprint verification
 compose.yaml                 Optional local PostgreSQL infrastructure
 ```
 
-Future task-owned boundaries: `app/[locale]/` for localized routes; `app/admin/` for staff pages; `lib/catalog/` for catalog interfaces; `lib/server/services/`, `lib/server/dal/`, and `lib/server/auth/` for business logic, Prisma access, and authorization; `lib/money/` and `lib/i18n/` for exact money rules and language support; `prisma/` for schema/migrations in C01. These modules are deliberately not scaffolded in Sprint 1. See [AGENTS.md](AGENTS.md) for coding, scope, security, brand, currency, and verification rules.
+F03 adds `lib/storefront-rules.ts` for demo size/cart/quantity rules and `lib/money/demo.ts` for integer-cent USD demo formatting and disabled new-SYP selection. Future task-owned boundaries: `app/[locale]/` for localized routes; `app/admin/` for staff pages; `lib/catalog/` for catalog interfaces; `lib/server/services/`, `lib/server/dal/`, and `lib/server/auth/` for business logic, Prisma access, and authorization; approved multi-currency rules in `lib/money/` and language support in `lib/i18n/`; `prisma/` for schema/migrations in C01. These future modules are not scaffolded early. See [AGENTS.md](AGENTS.md) for coding, scope, security, brand, currency, and verification rules.
 
 ## Planning and next work
 
+- [Project review and proposed build order](docs/PROJECT_ANALYSIS.md)
 - [E-commerce plan](docs/ECOMMERCE_PLAN.md)
 - [Implementation tasks and dependencies](docs/ECOMMERCE_TASKS.md)
 - [Sprint 1 verification report](docs/SPRINT_1_REPORT.md)
+- [Phase 1 implementation and verification](docs/PHASE_1_REPORT.md)
 
-Approved product assets/inventory, actual prices, new-SYP precision/rounding/conversion rules, settlement currency, courier zones/fees, and store policies remain owner decisions. Keep demo labeling and checkout disabled until later implementation and launch checks are complete. Existing currency relabeling, silent quick-add sizing, unverified `®`, and dialog/navigation gaps remain recorded under their own tasks.
+Approved product assets/inventory, actual prices, new-SYP precision/rounding/conversion rules, settlement currency, courier zones/fees, and store policies remain owner decisions. Keep demo labeling and checkout disabled until later implementation and launch checks are complete. F03 corrects currency relabeling, implicit fitted sizes, and inconsistent quantity limits; unverified `®` and dialog/navigation gaps remain assigned to F02/F04.

@@ -85,6 +85,7 @@ button { color: inherit; }
 .button { min-height: 47px; padding: 0 19px; display: inline-flex; align-items: center; justify-content: center; gap: 22px; border: 1px solid transparent; font-size: 10px; font-weight: 700; letter-spacing: .025em; cursor: pointer; transition: background .2s, color .2s, transform .2s; }
 .button:hover { transform: translateY(-2px); }
 .button-dark { background: var(--ink); color: var(--paper); }
+.button:disabled, .size-option:disabled, .quantity-stepper button:disabled, .cart-line-controls button:disabled { opacity: .45; cursor: not-allowed; }
 .button-dark:hover { background: var(--red); }
 .text-link { min-height: 34px; display: inline-flex; align-items: center; gap: 10px; color: var(--ink); font-size: 10px; font-weight: 750; }
 .text-link svg, .style-card-arrow svg { transition: transform .2s; }

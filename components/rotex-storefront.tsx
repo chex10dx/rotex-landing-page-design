@@ -1,7 +1,7 @@
 'use client'
 
 import Image from 'next/image'
-import { useMemo, useState, type FormEvent } from 'react'
+import { useMemo, useReducer, useState, type FormEvent } from 'react'
 import {
   ArrowDown,
   ArrowRight,
@@ -18,10 +18,18 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { fittedSizes, products, type Product } from '@/lib/products'
-
-type Currency = 'USD' | 'SYP'
-type CartLine = { product: Product; size: string; quantity: number }
+import { products, type Product } from '@/lib/products'
+import { demoCurrencyOptions, formatDemoPrice, selectDemoCurrency, type DemoCurrency } from '@/lib/money/demo'
+import {
+  MAX_DEMO_QUANTITY,
+  MIN_DEMO_QUANTITY,
+  ONE_SIZE,
+  canAddItem,
+  demoCartReducer,
+  demoSubtotalUsdMinor,
+  getSizeOptions,
+  initialSize,
+} from '@/lib/storefront-rules'
 
 const copy = {
   en: {
@@ -54,6 +62,16 @@ const copy = {
     subscribe: 'Subscribe',
     sample: 'SAMPLE PRICE · NOT A LIVE OFFER',
     fittedLabel: 'Fitted cap',
+    adjustableLabel: 'Adjustable cap',
+    oneSize: 'One size',
+    chooseSize: 'Choose a size to add',
+    selectedSize: 'Selected size',
+    noSize: 'Choose your size · demo options only',
+    sizeRequired: 'Please choose a valid size before adding to your demo bag.',
+    quantityLimit: `Demo limit: ${MIN_DEMO_QUANTITY}–${MAX_DEMO_QUANTITY} per size in your bag`,
+    added: 'added to your demo bag',
+    sampleCurrency: 'Sample currency',
+    sypUnavailable: 'New-SYP prices are not approved yet. Only USD sample prices are available.',
     add: 'Add to bag',
     quick: 'Quick view',
     search: 'Search the first drop',
@@ -94,6 +112,16 @@ const copy = {
     subscribe: 'اشترك',
     sample: 'سعر تجريبي · ليس عرضاً للبيع',
     fittedLabel: 'قبعة ثابتة المقاس',
+    adjustableLabel: 'قبعة قابلة للتعديل',
+    oneSize: 'مقاس واحد',
+    chooseSize: 'اختر المقاس للإضافة',
+    selectedSize: 'المقاس المحدد',
+    noSize: 'اختر مقاسك · خيارات تجريبية فقط',
+    sizeRequired: 'يرجى اختيار مقاس صالح قبل الإضافة إلى الحقيبة التجريبية.',
+    quantityLimit: `الحد التجريبي: من ${MIN_DEMO_QUANTITY} إلى ${MAX_DEMO_QUANTITY} لكل مقاس في الحقيبة`,
+    added: 'أُضيف إلى حقيبتك التجريبية',
+    sampleCurrency: 'عملة الأسعار التجريبية',
+    sypUnavailable: 'أسعار الليرة السورية الجديدة لم تُعتمد بعد. تتوفر أسعار تجريبية بالدولار فقط.',
     add: 'أضف إلى الحقيبة',
     quick: 'عرض سريع',
     search: 'ابحث في الإصدار الأول',
@@ -106,22 +134,38 @@ const copy = {
   },
 } as const
 
-function Price({ currency, amount = 58 }: { currency: Currency; amount?: number }) {
-  return <span>{currency === 'USD' ? `$${amount}` : `${amount} SYP`}</span>
+function Price({ currency, amountUsdMinor }: { currency: DemoCurrency; amountUsdMinor: number }) {
+  return <span><bdi dir="ltr">{formatDemoPrice(amountUsdMinor, currency)}</bdi></span>
+}
+
+function SizeChoices({ product, selected, onSelect, language }: {
+  product: Product
+  selected: string | null
+  onSelect: (size: string) => void
+  language: 'en' | 'ar'
+}) {
+  const t = copy[language]
+  return <>
+    <div className="size-options" role="group" aria-label={t.size}>
+      {getSizeOptions(product).map((option) => <button key={option.value} type="button" dir={option.value === ONE_SIZE ? undefined : 'ltr'} disabled={!option.selectable} className={selected === option.value ? 'size-option selected' : 'size-option'} aria-pressed={selected === option.value} onClick={() => onSelect(option.value)}>{option.value === ONE_SIZE ? t.oneSize : option.value}</button>)}
+    </div>
+    <p className="quantity-hint" aria-live="polite">{selected ? <>{t.selectedSize}: <bdi dir={selected === ONE_SIZE ? undefined : 'ltr'}>{selected === ONE_SIZE ? t.oneSize : selected}</bdi></> : t.noSize}</p>
+  </>
 }
 
 export default function RotexStorefront() {
-  const [currency, setCurrency] = useState<Currency>('USD')
+  const [currency, setCurrency] = useState<DemoCurrency>('USD')
   const [language, setLanguage] = useState<'en' | 'ar'>('en')
   const [menuOpen, setMenuOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
-  const [cart, setCart] = useState<CartLine[]>([])
+  const [bag, dispatchBag] = useReducer(demoCartReducer, { lines: [], feedback: null })
+  const cart = bag.lines
   const [cartOpen, setCartOpen] = useState(false)
   const [quickView, setQuickView] = useState<Product | null>(null)
-  const [selectedSize, setSelectedSize] = useState('7¼')
-  const [spotlightSize, setSpotlightSize] = useState('7¼')
-  const [quantity, setQuantity] = useState(1)
+  const [selectedSize, setSelectedSize] = useState<string | null>(null)
+  const [spotlightSize, setSpotlightSize] = useState<string | null>(() => initialSize(products[0]))
+  const [quantity, setQuantity] = useState(MIN_DEMO_QUANTITY)
   const [notice, setNotice] = useState('')
   const [newsletterEmail, setNewsletterEmail] = useState('')
   const [newsletterMessage, setNewsletterMessage] = useState('')
@@ -134,36 +178,27 @@ export default function RotexStorefront() {
     return products.filter((product) => `${product.name} ${product.color} ${product.style}`.toLowerCase().includes(query))
   }, [searchTerm])
   const cartCount = cart.reduce((total, item) => total + item.quantity, 0)
-  const total = cart.reduce((sum, item) => sum + item.product.price * item.quantity, 0)
+  const total = demoSubtotalUsdMinor(cart)
+  const feedback = bag.feedback
+  const cartNotice = feedback?.kind === 'added'
+    ? `${feedback.productName} · ${feedback.size === ONE_SIZE ? t.oneSize : feedback.size} ${t.added}`
+    : feedback?.kind === 'size' ? t.sizeRequired : feedback?.kind === 'quantity' ? t.quantityLimit : ''
+  const activeNotice = notice || cartNotice
 
-  function addToCart(product: Product, size: string, count = 1) {
-    setCart((current) => {
-      const existing = current.find((item) => item.product.id === product.id && item.size === size)
-      if (existing) {
-        return current.map((item) =>
-          item === existing ? { ...item, quantity: item.quantity + count } : item,
-        )
-      }
-      return [...current, { product, size, quantity: count }]
-    })
-    setNotice(`${product.name} · ${size} added to your demo bag`)
-    window.setTimeout(() => setNotice(''), 2800)
+  function addToCart(product: Product, size: string | null, count = MIN_DEMO_QUANTITY) {
+    const valid = canAddItem(cart, product, size, count)
+    setNotice('')
+    dispatchBag({ type: 'add', product, size, quantity: count })
+    window.setTimeout(() => dispatchBag({ type: 'dismiss' }), 2800)
+    return valid
   }
 
-  function changeQuantity(productId: string, size: string, change: number) {
-    setCart((current) =>
-      current
-        .map((item) =>
-          item.product.id === productId && item.size === size
-            ? { ...item, quantity: item.quantity + change }
-            : item,
-        )
-        .filter((item) => item.quantity > 0),
-    )
+  function changeQuantity(productId: string, size: string, change: -1 | 1) {
+    dispatchBag({ type: 'change', productId, size, change })
   }
 
   function openQuickView(product: Product) {
-    setSelectedSize('7¼')
+    setSelectedSize(initialSize(product))
     setQuickView(product)
   }
 
@@ -200,11 +235,10 @@ export default function RotexStorefront() {
             {searchOpen ? <X size={19} /> : <Search size={19} />}
           </button>
           <label className="currency-select-label">
-            <span className="sr-only">Sample currency</span>
+            <span className="sr-only">{t.sampleCurrency}</span>
             <Globe2 size={15} aria-hidden="true" />
-            <select value={currency} onChange={(event) => setCurrency(event.target.value as Currency)} aria-label="Sample currency">
-              <option value="USD">USD</option>
-              <option value="SYP">SYP</option>
+            <select value={currency} onChange={(event) => setCurrency(selectDemoCurrency(event.target.value))} aria-label={t.sampleCurrency} aria-description={t.sypUnavailable} title={t.sypUnavailable}>
+              {demoCurrencyOptions.map((option) => <option key={option.currency} value={option.currency} disabled={!option.enabled}>{option.currency}</option>)}
             </select>
             <ChevronDown size={12} aria-hidden="true" />
           </label>
@@ -287,13 +321,13 @@ export default function RotexStorefront() {
                     <span className="product-index">0{index + 1}</span>
                     <span className="product-label">{product.style.toUpperCase()}</span>
                     <button type="button" className="quick-view-button" onClick={() => openQuickView(product)}>{t.quick}<ArrowUpRight size={14} /></button>
-                    <button type="button" className="quick-add-button" aria-label={`Add ${product.name} to bag`} onClick={() => addToCart(product, '7¼')}><Plus size={18} /></button>
+                    <button type="button" className="quick-add-button" aria-label={`${t.quick}: ${product.name}`} onClick={() => openQuickView(product)}><Plus size={18} /></button>
                   </div>
                   <div className="product-info">
                     <div><h3>{product.name}</h3><p>{product.color}</p></div>
-                    <div className="product-price"><Price currency={currency} amount={product.price} /><span className="price-note">{t.sample}</span></div>
+                    <div className="product-price"><Price currency={currency} amountUsdMinor={product.priceUsdMinor} /><span className="price-note">{t.sample}</span></div>
                   </div>
-                  <div className="product-card-foot"><span className="color-chip" style={{ backgroundColor: product.accent }} /> <span>{isArabic ? 'لون الإصدار' : 'DEBUT COLORWAY'}</span><span className="product-type">{t.fittedLabel}</span></div>
+                  <div className="product-card-foot"><span className="color-chip" style={{ backgroundColor: product.accent }} /> <span>{isArabic ? 'لون الإصدار' : 'DEBUT COLORWAY'}</span><span className="product-type">{product.style === 'Adjustable' ? t.adjustableLabel : t.fittedLabel}</span></div>
                 </article>
               ))}
             </div>
@@ -346,22 +380,20 @@ export default function RotexStorefront() {
             <p className="eyebrow"><span className="eyebrow-line" /> 004 — EDITOR&apos;S PICK</p>
             <h2 id="spotlight-title">ROTEX<br /><em>Midnight</em></h2>
             <p className="spotlight-blurb">{products[0].detail}</p>
-            <div className="spotlight-price"><Price currency={currency} /><span>{t.sample}</span></div>
+            <div className="spotlight-price"><Price currency={currency} amountUsdMinor={products[0].priceUsdMinor} /><span>{t.sample}</span></div>
             <div className="selector-block">
               <div className="selector-title"><span>{t.size}</span><button type="button" className="size-guide-link" onClick={() => setNotice(isArabic ? 'دليل تجريبي: اختر المقاس المعتاد. المقاسات الفعلية ستُؤكّد عند إطلاق المتجر.' : 'Demo size guide: choose your usual fitted-cap size. Final sizing details will be confirmed at launch.')}><Ruler size={14} />{t.sizeGuide}</button></div>
-              <div className="size-options" role="group" aria-label="Choose fitted cap size">
-                {fittedSizes.map((size) => <button key={size} type="button" className={spotlightSize === size ? 'size-option selected' : 'size-option'} aria-pressed={spotlightSize === size} onClick={() => setSpotlightSize(size)}>{size}</button>)}
-              </div>
+              <SizeChoices product={products[0]} selected={spotlightSize} onSelect={setSpotlightSize} language={language} />
             </div>
             <div className="spotlight-quantity-row">
               <div className="quantity-stepper" aria-label="Quantity selector">
-                <button type="button" aria-label="Decrease quantity" onClick={() => setQuantity((current) => Math.max(1, current - 1))}><Minus size={14} /></button>
+                <button type="button" aria-label={isArabic ? 'تقليل الكمية' : 'Decrease quantity'} disabled={quantity <= MIN_DEMO_QUANTITY} onClick={() => setQuantity((current) => Math.max(MIN_DEMO_QUANTITY, current - 1))}><Minus size={14} /></button>
                 <span aria-live="polite">{quantity}</span>
-                <button type="button" aria-label="Increase quantity" onClick={() => setQuantity((current) => Math.min(9, current + 1))}><Plus size={14} /></button>
+                <button type="button" aria-label={isArabic ? 'زيادة الكمية' : 'Increase quantity'} disabled={quantity >= MAX_DEMO_QUANTITY} onClick={() => setQuantity((current) => Math.min(MAX_DEMO_QUANTITY, current + 1))}><Plus size={14} /></button>
               </div>
-              <span className="quantity-hint">{isArabic ? 'بحد أقصى 9 في النسخة التجريبية' : 'Demo quantity limit: 9'}</span>
+              <span className="quantity-hint">{t.quantityLimit}</span>
             </div>
-            <button type="button" className="button button-dark add-bag-button" onClick={() => addToCart(products[0], spotlightSize, quantity)}>{t.add}<ShoppingBag size={17} /></button>
+            <button type="button" className="button button-dark add-bag-button" disabled={!canAddItem(cart, products[0], spotlightSize, quantity)} onClick={() => addToCart(products[0], spotlightSize, quantity)}>{!spotlightSize ? t.chooseSize : canAddItem(cart, products[0], spotlightSize, quantity) ? t.add : t.quantityLimit}<ShoppingBag size={17} /></button>
             <p className="prototype-caption"><span className="prototype-dot" />{t.demo}</p>
             <div className="product-facts"><span>{t.material}</span><span>{t.detailLabel}</span><span>{t.fitLabel}</span></div>
           </div>
@@ -392,14 +424,14 @@ export default function RotexStorefront() {
 
       <footer className="site-footer">
         <div className="footer-main"><div className="footer-brand"><a href="#top" className="wordmark footer-wordmark">ROTEX<span>®</span></a><p>{isArabic ? 'قبعات مميّزة. أسلوبك اليومي.' : 'Distinctive headwear for everyday expression.'}</p><span className="footer-origin">DAMASCUS — EVERYWHERE</span></div><div className="footer-column"><h3>{isArabic ? 'تسوّق' : 'EXPLORE'}</h3><a href="#new">{t.navigation[0]}</a><a href="#fitted">{t.navigation[1]}</a><a href="#adjustable">{t.navigation[2]}</a></div><div className="footer-column"><h3>{isArabic ? 'روتكس' : 'ROTEX'}</h3><a href="#story">{t.navigation[4]}</a><a href="#details">{isArabic ? 'التفاصيل' : 'Craft & detail'}</a><a href="#community">{isArabic ? 'المجتمع' : 'Community'}</a></div><div className="footer-column"><h3>{isArabic ? 'المعلومات' : 'INFORMATION'}</h3><a href="#spotlight" onClick={() => setNotice(isArabic ? 'معلومات الشحن ستتوفر عند إطلاق المتجر.' : 'Shipping information will be available when the store launches.')}>{isArabic ? 'الشحن والإرجاع' : 'Shipping & returns'}</a><a href="#spotlight" onClick={() => setNotice(isArabic ? 'دليل المقاسات تجريبي.' : 'The size guide is a demo.')}>{t.sizeGuide}</a><a href="#newsletter">{isArabic ? 'تواصل معنا' : 'Contact'}</a></div></div>
-        <div className="footer-bottom"><span>© 2026 ROTEX. {isArabic ? 'جميع الحقوق محفوظة.' : 'ALL RIGHTS RESERVED.'}</span><span className="footer-demo">{t.sample}</span><div className="footer-controls"><label><span className="sr-only">Currency</span><select value={currency} onChange={(event) => setCurrency(event.target.value as Currency)}><option value="USD">USD</option><option value="SYP">SYP</option></select></label><button type="button" onClick={() => setLanguage(isArabic ? 'en' : 'ar')}>{isArabic ? 'العربية' : 'English'} / {isArabic ? 'EN' : 'العربية'}</button></div></div>
+        <div className="footer-bottom"><span>© 2026 ROTEX. {isArabic ? 'جميع الحقوق محفوظة.' : 'ALL RIGHTS RESERVED.'}</span><span className="footer-demo">{t.sample}</span><div className="footer-controls"><label><span className="sr-only">Currency</span><select value={currency} onChange={(event) => setCurrency(selectDemoCurrency(event.target.value))} aria-label={t.sampleCurrency} aria-description={t.sypUnavailable} title={t.sypUnavailable}>{demoCurrencyOptions.map((option) => <option key={option.currency} value={option.currency} disabled={!option.enabled}>{option.currency}</option>)}</select></label><button type="button" onClick={() => setLanguage(isArabic ? 'en' : 'ar')}>{isArabic ? 'العربية' : 'English'} / {isArabic ? 'EN' : 'العربية'}</button></div></div>
       </footer>
 
-      {notice && <div className="toast-notice" role="status"><Check size={16} />{notice}<button type="button" aria-label="Dismiss notice" onClick={() => setNotice('')}><X size={15} /></button></div>}
+      {activeNotice && <div className="toast-notice" role="status"><Check size={16} />{activeNotice}<button type="button" aria-label="Dismiss notice" onClick={() => { setNotice(''); dispatchBag({ type: 'dismiss' }) }}><X size={15} /></button></div>}
 
-      {quickView && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setQuickView(null) }}><section className="quick-modal" role="dialog" aria-modal="true" aria-labelledby="quick-modal-title"><button type="button" className="modal-close" aria-label="Close quick view" onClick={() => setQuickView(null)}><X size={20} /></button><div className="quick-modal-image"><Image src={quickView.image} alt={`${quickView.name} cap product board`} fill sizes="(max-width: 700px) 100vw, 50vw" className="product-image" /></div><div className="quick-modal-content"><p className="eyebrow"><span className="eyebrow-line" /> QUICK LOOK / 0{products.findIndex((product) => product.id === quickView.id) + 1}</p><h2 id="quick-modal-title">{quickView.name}</h2><p className="quick-modal-color">{quickView.color} · {t.fittedLabel}</p><p>{quickView.detail}</p><div className="spotlight-price"><Price currency={currency} amount={quickView.price} /><span>{t.sample}</span></div><div className="selector-block"><div className="selector-title"><span>{t.size}</span></div><div className="size-options" role="group" aria-label="Choose fitted cap size">{fittedSizes.map((size) => <button key={size} type="button" className={selectedSize === size ? 'size-option selected' : 'size-option'} aria-pressed={selectedSize === size} onClick={() => setSelectedSize(size)}>{size}</button>)}</div></div><button type="button" className="button button-dark add-bag-button" onClick={() => { addToCart(quickView, selectedSize); setQuickView(null) }}>{t.add}<ShoppingBag size={17} /></button><p className="prototype-caption"><span className="prototype-dot" />{t.demo}</p></div></section></div>}
+      {quickView && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setQuickView(null) }}><section className="quick-modal" role="dialog" aria-modal="true" aria-labelledby="quick-modal-title"><button type="button" className="modal-close" aria-label="Close quick view" onClick={() => setQuickView(null)}><X size={20} /></button><div className="quick-modal-image"><Image src={quickView.image} alt={`${quickView.name} cap product board`} fill sizes="(max-width: 700px) 100vw, 50vw" className="product-image" /></div><div className="quick-modal-content"><p className="eyebrow"><span className="eyebrow-line" /> QUICK LOOK / 0{products.findIndex((product) => product.id === quickView.id) + 1}</p><h2 id="quick-modal-title">{quickView.name}</h2><p className="quick-modal-color">{quickView.color} · {quickView.style === 'Adjustable' ? t.adjustableLabel : t.fittedLabel}</p><p>{quickView.detail}</p><div className="spotlight-price"><Price currency={currency} amountUsdMinor={quickView.priceUsdMinor} /><span>{t.sample}</span></div><div className="selector-block"><div className="selector-title"><span>{t.size}</span></div><SizeChoices product={quickView} selected={selectedSize} onSelect={setSelectedSize} language={language} /></div><button type="button" className="button button-dark add-bag-button" disabled={!canAddItem(cart, quickView, selectedSize, MIN_DEMO_QUANTITY)} onClick={() => { if (addToCart(quickView, selectedSize)) setQuickView(null) }}>{!selectedSize ? t.chooseSize : canAddItem(cart, quickView, selectedSize, MIN_DEMO_QUANTITY) ? t.add : t.quantityLimit}<ShoppingBag size={17} /></button><p className="prototype-caption"><span className="prototype-dot" />{t.demo}</p></div></section></div>}
 
-      {cartOpen && <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setCartOpen(false) }}><aside className="cart-drawer" role="dialog" aria-modal="true" aria-labelledby="cart-title"><div className="drawer-heading"><div><p className="eyebrow"><span className="eyebrow-line" /> ROTEX / SAMPLE BAG</p><h2 id="cart-title">{isArabic ? 'حقيبتك' : 'Your bag'} <span>({cartCount})</span></h2></div><button type="button" className="modal-close" aria-label="Close shopping bag" onClick={() => setCartOpen(false)}><X size={20} /></button></div>{cart.length ? <><div className="cart-items">{cart.map((line) => <article className="cart-line" key={`${line.product.id}-${line.size}`}><div className="cart-line-image"><Image src={line.product.image} alt={`${line.product.name} cap`} fill sizes="100px" className="product-image" /></div><div className="cart-line-detail"><h3>{line.product.name}</h3><p>{line.product.color} / {line.size}</p><div className="cart-line-controls"><button type="button" aria-label={`Remove one ${line.product.name}`} onClick={() => changeQuantity(line.product.id, line.size, -1)}><Minus size={13} /></button><span>{line.quantity}</span><button type="button" aria-label={`Add one ${line.product.name}`} onClick={() => changeQuantity(line.product.id, line.size, 1)}><Plus size={13} /></button></div></div><Price currency={currency} amount={line.product.price * line.quantity} /></article>)}</div><div className="cart-summary"><div><span>{isArabic ? 'المجموع التجريبي' : 'Sample subtotal'}</span><strong><Price currency={currency} amount={total} /></strong></div><p>{t.demo}. {t.sample}.</p><button type="button" className="button button-dark checkout-demo" onClick={() => setNotice(isArabic ? 'لا يمكن إتمام الشراء في هذه النسخة التجريبية.' : 'Checkout is disabled in this storefront prototype.')}>{isArabic ? 'متابعة' : 'Continue'}<ArrowRight size={16} /></button></div></> : <div className="empty-cart"><ShoppingBag size={28} /><p>{isArabic ? 'حقيبتك فارغة حالياً.' : 'Your bag is currently empty.'}</p><button type="button" className="button button-dark" onClick={() => { setCartOpen(false); document.getElementById('new')?.scrollIntoView({ behavior: 'smooth' }) }}>{isArabic ? 'اكتشف المجموعة' : 'Explore the collection'}<ArrowRight size={15} /></button></div>}</aside></div>}
+      {cartOpen && <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setCartOpen(false) }}><aside className="cart-drawer" role="dialog" aria-modal="true" aria-labelledby="cart-title"><div className="drawer-heading"><div><p className="eyebrow"><span className="eyebrow-line" /> ROTEX / SAMPLE BAG</p><h2 id="cart-title">{isArabic ? 'حقيبتك' : 'Your bag'} <span>({cartCount})</span></h2></div><button type="button" className="modal-close" aria-label="Close shopping bag" onClick={() => setCartOpen(false)}><X size={20} /></button></div>{cart.length ? <><div className="cart-items">{cart.map((line) => <article className="cart-line" key={`${line.product.id}-${line.size}`}><div className="cart-line-image"><Image src={line.product.image} alt={`${line.product.name} cap`} fill sizes="100px" className="product-image" /></div><div className="cart-line-detail"><h3>{line.product.name}</h3><p>{line.product.color} / {line.size === ONE_SIZE ? t.oneSize : line.size}</p><div className="cart-line-controls"><button type="button" aria-label={`${isArabic ? 'إزالة قطعة من' : 'Remove one'} ${line.product.name}`} onClick={() => changeQuantity(line.product.id, line.size, -1)}><Minus size={13} /></button><span>{line.quantity}</span><button type="button" aria-label={`${isArabic ? 'إضافة قطعة من' : 'Add one'} ${line.product.name}`} disabled={line.quantity >= MAX_DEMO_QUANTITY} onClick={() => changeQuantity(line.product.id, line.size, 1)}><Plus size={13} /></button></div></div><Price currency={currency} amountUsdMinor={line.product.priceUsdMinor * line.quantity} /></article>)}</div><div className="cart-summary"><div><span>{isArabic ? 'المجموع التجريبي' : 'Sample subtotal'}</span><strong><Price currency={currency} amountUsdMinor={total} /></strong></div><p>{t.demo}. {t.sample}.</p><button type="button" className="button button-dark checkout-demo" onClick={() => setNotice(isArabic ? 'لا يمكن إتمام الشراء في هذه النسخة التجريبية.' : 'Checkout is disabled in this storefront prototype.')}>{isArabic ? 'متابعة' : 'Continue'}<ArrowRight size={16} /></button></div></> : <div className="empty-cart"><ShoppingBag size={28} /><p>{isArabic ? 'حقيبتك فارغة حالياً.' : 'Your bag is currently empty.'}</p><button type="button" className="button button-dark" onClick={() => { setCartOpen(false); document.getElementById('new')?.scrollIntoView({ behavior: 'smooth' }) }}>{isArabic ? 'اكتشف المجموعة' : 'Explore the collection'}<ArrowRight size={15} /></button></div>}</aside></div>}
 
       {accountOpen && <div className="modal-backdrop account-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAccountOpen(false) }}><section className="account-modal" role="dialog" aria-modal="true" aria-labelledby="account-modal-title"><button type="button" className="modal-close" aria-label="Close account information" onClick={() => setAccountOpen(false)}><X size={20} /></button><span className="account-icon"><UserRound size={22} /></span><p className="eyebrow"><span className="eyebrow-line" /> ROTEX / MEMBERS</p><h2 id="account-modal-title">{isArabic ? 'قريباً.' : 'Coming into focus.'}</h2><p>{isArabic ? 'ميزات الحساب والتسجيل غير مفعّلة في النسخة التجريبية.' : 'Account and sign-in features are not enabled in this storefront prototype.'}</p><button type="button" className="button button-dark" onClick={() => setAccountOpen(false)}>{isArabic ? 'فهمت' : 'Got it'}<Check size={15} /></button></section></div>}
     </main>
